@@ -152,6 +152,9 @@ void applyEmojiPresentation(QTextDocument& document, bool jumbo)
                 cursor.setPosition(end, QTextCursor::KeepAnchor);
                 QTextCharFormat emojiFormat;
                 emojiFormat.setFontPointSize(pointSize * scale);
+                QFont emojiFont = document.defaultFont();
+                EmojiPresentation::preferEmojiFont(emojiFont);
+                emojiFormat.setFontFamilies(emojiFont.families());
                 cursor.mergeCharFormat(emojiFormat);
             }
         }

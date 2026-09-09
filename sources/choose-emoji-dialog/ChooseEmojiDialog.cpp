@@ -39,6 +39,7 @@
 
 #include "EmojiDialogSupport.h"
 #include "backend/emoji/EmojiInfo.h"
+#include "ui/EmojiPresentation.h"
 #include "ui_ChooseEmojiDialog.h"
 
 namespace Mattermost {
@@ -69,8 +70,6 @@ ChooseEmojiDialog::ChooseEmojiDialog(QWidget *parent)
 ,ui(new Ui::ChooseEmojiDialog)
 {
 	ui->setupUi(this);
-	ui->tabWidget->tabBar()->setFont(
-		EmojiDialogSupport::emojiButtonFont(ui->tabWidget->font(), 10));
 	searchTimer = new QTimer(this);
 	searchTimer->setSingleShot(true);
 	searchTimer->setInterval(100);
@@ -231,6 +230,7 @@ void ChooseEmojiDialog::createTabForCategory (uint32_t categoryIndex, uint32_t t
 	sizePolicy.setVerticalStretch(0);
 
 	QFont font = EmojiDialogSupport::emojiButtonFont (QFont());
+	EmojiPresentation::preferEmojiFont(font);
 
 	QGridLayout *gridLayout = createTab (categoryIndex, tabIndex);
 
@@ -333,14 +333,24 @@ void ChooseEmojiDialog::createTabForCategory (uint32_t categoryIndex, uint32_t t
 	}
 
 	/**
-	 * Set tab text and icon
+	 * Set the category label text. Render the category emoji with the preferred
+	 * emoji font as a tab icon; when no emoji font is installed, fall back to
+	 * prepending the glyph to the label text and let Qt pick a fallback font.
 	 */
-	QString iconString;
-
-	if (! (categoryIndex == EmojiCategory::custom || categoryIndex == EmojiCategory::favorites)) {
-		iconString = emojis[indexForCategoryTab[categoryIndex]].unicodeString;
+	const bool plainTab = (categoryIndex == EmojiCategory::custom
+		|| categoryIndex == EmojiCategory::favorites);
+	ui->tabWidget->setTabText (tabIndex, tabName);
+	if (plainTab) {
+		ui->tabWidget->setTabIcon (tabIndex, QIcon());
+	} else if (EmojiPresentation::preferredEmojiFamily().isEmpty()) {
+		ui->tabWidget->setTabIcon (tabIndex, QIcon());
+		ui->tabWidget->setTabText (tabIndex,
+			emojis[indexForCategoryTab[categoryIndex]].unicodeString + tabName);
+	} else {
+		const QString glyph = emojis[indexForCategoryTab[categoryIndex]].unicodeString;
+		ui->tabWidget->setTabIcon (tabIndex,
+			QIcon(EmojiPresentation::renderEmojiPixmap(glyph, 16)));
 	}
-	ui->tabWidget->setTabText (tabIndex, iconString + tabName);
 
 	/**
 	 * If there are less emojis than a complete row in the current tab, add a horizontal spacer

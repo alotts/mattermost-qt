@@ -63,7 +63,7 @@ PostReaction::PostReaction(Backend& backend,
 {
     ui_->setupUi(this);
 
-    const QFont reactionFont = EmojiPresentation::fontForMode(
+    const QFont reactionFont = EmojiPresentation::emojiFontForMode(
         ui_->emoji->font(), EmojiPresentation::Mode::Reaction);
     ui_->emoji->setFont(reactionFont);
     emojiValue_ = EmojiPresentation::normalizeHtml(

@@ -9,11 +9,13 @@
 #include <QApplication>
 #include <QColor>
 #include <QEvent>
+#include <QFont>
 #include <QIcon>
 #include <QPainter>
 #include <QPalette>
 
 #include "IconUtils.h"
+#include "ui/EmojiPresentation.h"
 
 namespace Mattermost {
 namespace {
@@ -48,11 +50,13 @@ QString ThemeIconButton::symbolicResource() const
     if (!configuredResource.isEmpty()) {
         return configuredResource;
     }
+    // The composer's emoji and attach actions are rendered as emoji glyphs
+    // instead of embedded SVG resources; see setupComposerUi().
     if (objectName() == QStringLiteral("addEmojiButton")) {
-        return QStringLiteral(":/icons/emoji");
+        return {};
     }
     if (objectName() == QStringLiteral("attachButton")) {
-        return QStringLiteral(":/icons/paperclip");
+        return {};
     }
     return {};
 }
@@ -163,8 +167,17 @@ void ThemeIconButton::paintEvent(QPaintEvent* event)
     }
 
     painter.setPen(color);
-    painter.setFont(font());
-    painter.drawText(rect(), Qt::AlignCenter, text());
+    const QString buttonText = text();
+    if (EmojiPresentation::isEmojiOnlyText(buttonText)) {
+        QFont emojiFont = font();
+        EmojiPresentation::preferEmojiFont(emojiFont);
+        const QSize targetSize = iconSize().isValid() ? iconSize() : QSize(24, 24);
+        emojiFont.setPixelSize(std::max(12, targetSize.height()));
+        painter.setFont(emojiFont);
+    } else {
+        painter.setFont(font());
+    }
+    painter.drawText(rect(), Qt::AlignCenter, buttonText);
 }
 
 } // namespace Mattermost
