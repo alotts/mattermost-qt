@@ -9,10 +9,12 @@
 #include <QIcon>
 #include <QKeySequence>
 #include <QLabel>
+#include <QList>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QPointer>
 #include <QSettings>
 #include <QShortcut>
 #include <QSplitter>
@@ -469,6 +471,28 @@ ChatArea* NavigationUiController::findThread(const QString& channelId,
         }
     }
     return nullptr;
+}
+
+void NavigationUiController::closeAllThreadWindows()
+{
+    // Detached thread areas are reparented to null and shown as top-level
+    // windows. Each sets WA_DeleteOnClose, so closing them destroys them.
+    // Docked thread areas are children of threadStack and are torn down with
+    // the MainWindow; only the top-level (detached) ones need explicit closing.
+    QList<QPointer<ChatArea>> detached;
+    const auto widgets = QApplication::allWidgets();
+    for (QWidget* widget : widgets) {
+        auto* area = qobject_cast<ChatArea*>(widget);
+        if (area && area->isThread && area->isWindow()) {
+            detached.append(area);
+        }
+    }
+
+    for (const QPointer<ChatArea>& area : detached) {
+        if (area) {
+            area->close();
+        }
+    }
 }
 
 void NavigationUiController::ensureThreadButton(ChatArea* area)

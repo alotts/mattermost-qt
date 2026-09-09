@@ -30,6 +30,7 @@
 #include "backend/Backend.h"
 #include "backend/CustomEmojiService.h"
 #include "config/Config.h"
+#include "navigation/NavigationUiController.h"
 #include "Settings.h"
 #include "ui/OverlayScrollBarManager.h"
 #include "ui/SplitterHandleManager.h"
@@ -44,10 +45,18 @@ public:
 	void showWindow ();
 	void toggleShowWindow ();
 	void reopen ();
+	void quitApplication ();
+	void closeAllThreadWindows ();
 private:
 	std::unique_ptr<MainWindow>			mainWindow;
-	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
+	// Declare the context menu before the tray icon: members are destroyed in
+	// reverse declaration order, so the menu is destroyed *after* the icon.
+	// QSystemTrayIcon only stores a raw pointer to its context menu and does not
+	// own it, so destroying the menu first would leave the icon holding a
+	// dangling pointer that the platform tray code can dereference on shutdown
+	// (use-after-free -> SIGSEGV on exit).
 	std::unique_ptr<QMenu>				trayIconMenu;
+	std::unique_ptr<QSystemTrayIcon> 	trayIcon;
 	Backend								backend;
 	LoginDialog*						loginDialog;
 	QWidget*							currentWindow;
@@ -55,8 +64,8 @@ private:
 
 inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 :QApplication (argc, argv)
-,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,trayIconMenu (std::make_unique<QMenu> (nullptr))
+,trayIcon (std::make_unique<QSystemTrayIcon> (QIcon(":/icons/img/icon0.ico"), nullptr))
 ,currentWindow (nullptr)
 {
     OverlayScrollBarManager::install(*this);
@@ -77,8 +86,33 @@ inline MattermostApplication::MattermostApplication (int& argc, char *argv[])
 	});
 
 	trayIconMenu->addAction ("Open Mattermost", this, &MattermostApplication::showWindow);
-	trayIconMenu->addAction ("Quit", qApp, &QApplication::quit);
+	trayIconMenu->addAction ("Quit", this, &MattermostApplication::quitApplication);
 	qApp->setQuitOnLastWindowClosed(false);
+
+	// Guarantee the process always exits cleanly on Quit: tear down live
+	// connections (WebSocket, HTTP, timers) deterministically before the event
+	// loop ends, regardless of which path triggered the quit.
+	connect (this, &QCoreApplication::aboutToQuit, [this] {
+		closeAllThreadWindows ();
+		backend.shutdown ();
+	});
+}
+
+void MattermostApplication::quitApplication ()
+{
+	// Close detached thread windows and shut the backend down first so no
+	// native window, reconnect/heartbeat timer or open socket can keep the
+	// process alive, then exit the event loop.
+	closeAllThreadWindows ();
+	backend.shutdown ();
+	QApplication::quit ();
+}
+
+void MattermostApplication::closeAllThreadWindows ()
+{
+	if (mainWindow) {
+		NavigationUiController::instance (*mainWindow).closeAllThreadWindows ();
+	}
 }
 
 void MattermostApplication::openLoginWindow ()

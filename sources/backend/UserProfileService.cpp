@@ -14,6 +14,7 @@
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QPixmap>
+#include <QPointer>
 #include <QTimer>
 
 #include "backend/Backend.h"
@@ -51,12 +52,16 @@ QStringList uniqueNonEmptyIds(const QStringList& userIds)
 
 UserProfileService& UserProfileService::instance(Backend& backend)
 {
-    static QMap<Backend*, UserProfileService*> instances;
-    auto it = instances.find(&backend);
-    if (it == instances.end()) {
-        it = instances.insert(&backend, new UserProfileService(backend));
+    // UserProfileService is a QObject child of Backend and is destroyed together
+    // with it (e.g. during application shutdown). Use a self-nulling QPointer so
+    // a stale entry never returns a dangling reference for a destroyed Backend;
+    // the next call transparently constructs a fresh instance.
+    static QHash<Backend*, QPointer<UserProfileService>> instances;
+    QPointer<UserProfileService>& service = instances[&backend];
+    if (!service) {
+        service = new UserProfileService(backend);
     }
-    return **it;
+    return *service;
 }
 
 UserProfileService::UserProfileService(Backend& backend)

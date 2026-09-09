@@ -243,6 +243,16 @@ void Backend::loginSuccess (const QJsonDocument& doc, const QNetworkReply& reply
 	callback (NetworkRequest::getToken());
 }
 
+void Backend::shutdown ()
+{
+	// Stop every recurring timer so no callback can fire after the event loop
+	// ends, then close live connections. The WebSocket close also suppresses
+	// automatic reconnect, so the process stands down immediately.
+	timeoutTimer.stop ();
+	webSocketConnector.close ();
+	httpConnector.reset ();
+}
+
 void Backend::reset ()
 {
 	isLoggedIn = false;
