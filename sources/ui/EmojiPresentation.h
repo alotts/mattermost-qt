@@ -2,8 +2,12 @@
 
 #include <algorithm>
 
+#include <QFontDatabase>
 #include <QFontMetricsF>
 #include <QImageReader>
+#include <QPainter>
+#include <QPixmap>
+#include <QRectF>
 #include <QRegularExpression>
 #include <QTextBlock>
 #include <QTextCharFormat>
@@ -57,6 +61,78 @@ inline QFont fontForMode(QFont font, Mode mode)
         font.setPixelSize(std::max(1, qRound(font.pixelSize() * scale)));
     }
     return font;
+}
+
+// Ordered strongest-first among known colour emoji families. The list mirrors
+// the common human preference for Apple's design, then the JoyPixels/EmojiOne
+// palette, then Noto, then Twemoji, then the Windows monochrome fallback. Only
+// families installed on the current system are considered.
+inline const QStringList& preferredEmojiFamilies()
+{
+    static const QStringList families = {
+        QStringLiteral("Apple Color Emoji"),
+        QStringLiteral("JoyPixels"),
+        QStringLiteral("EmojiOne Color"),
+        QStringLiteral("Noto Color Emoji"),
+        QStringLiteral("Twemoji Mozilla"),
+        QStringLiteral("Twitter Color Emoji"),
+        QStringLiteral("Segoe UI Emoji"),
+        QStringLiteral("Noto Emoji"),
+    };
+    return families;
+}
+
+inline const QString& preferredEmojiFamily()
+{
+    static const QString family = [] {
+        const QFontDatabase database;
+        const QStringList installed = database.families();
+        for (const QString& candidate : preferredEmojiFamilies()) {
+            if (installed.contains(candidate, Qt::CaseInsensitive)) {
+                return candidate;
+            }
+        }
+        return QString();
+    }();
+    return family;
+}
+
+inline void preferEmojiFont(QFont& font)
+{
+    const QString& family = preferredEmojiFamily();
+    if (!family.isEmpty()) {
+        font.setFamilies(QStringList{family});
+    }
+}
+
+inline QFont emojiFontForMode(QFont font, Mode mode)
+{
+    preferEmojiFont(font);
+    return fontForMode(std::move(font), mode);
+}
+
+// Renders a single emoji grapheme with the preferred emoji font into a
+// transparent pixmap of the requested glyph size. Used for controls that only
+// accept an icon (tab labels, tool buttons) rather than mixed rich text.
+inline QPixmap renderEmojiPixmap(const QString& glyph, int size)
+{
+    QFont font;
+    preferEmojiFont(font);
+    font.setPixelSize(std::max(1, size));
+
+    QFontMetricsF metrics(font);
+    const int width = std::max(1, qRound(metrics.horizontalAdvance(glyph)));
+    const int height = std::max(1, qRound(metrics.ascent() + metrics.descent()));
+
+    QPixmap pixmap(width, height);
+    pixmap.fill(Qt::transparent);
+    QPainter painter(&pixmap);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::TextAntialiasing, true);
+    painter.setFont(font);
+    painter.drawText(QRectF(0, 0, width, height), Qt::AlignCenter, glyph);
+    painter.end();
+    return pixmap;
 }
 
 inline int extent(const QFont& font, Mode mode)
@@ -221,5 +297,10 @@ inline QString normalizeHtml(const QString& html, const QFont& font, Mode mode)
     result += html.mid(previousEnd);
     return result;
 }
+
+// Returns true only when every non-whitespace grapheme in @p text is a known
+// unicode emoji. Used to decide whether a glyph should be rendered with the
+// preferred emoji font rather than the surrounding label font.
+bool isEmojiOnlyText(const QString& text);
 
 } // namespace Mattermost::EmojiPresentation

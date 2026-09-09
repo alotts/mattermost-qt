@@ -56,11 +56,11 @@ void ChatArea::setupComposerUi()
         button.setCursor(Qt::PointingHandCursor);
     };
 
-    ui->addEmojiButton->setText(QString());
+    ui->addEmojiButton->setText(QStringLiteral("😀"));
     ui->addEmojiButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
     configureActionButton(*ui->addEmojiButton);
 
-    ui->attachButton->setText(QString());
+    ui->attachButton->setText(QStringLiteral("📎"));
     ui->attachButton->setIconSize(QSize(ActionIconExtent, ActionIconExtent));
     ui->attachButton->setToolTip(tr("Add"));
     ui->attachButton->setAccessibleName(tr("Add"));
