@@ -33,6 +33,11 @@ static constexpr const char* DOWNLOAD_IMAGE_MAX_HEIGHT = "config/imageMaxHeight"
 
 // Historical attachment-file cache setting. Keep the key stable for existing
 // installations, but expose it explicitly on the Cache settings tab.
+// Composer key bindings. When enabled, Ctrl+Enter sends the message and plain
+// Enter inserts a new line. When disabled (default), plain Enter sends.
+static constexpr const char* COMPOSER_SEND_ON_CTRL_ENTER = "config/sendOnCtrlEnter";
+static constexpr bool COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT = false;
+
 static constexpr const char* CACHE_SIZE_MB = "config/cacheSizeMB";
 static constexpr int CACHE_SIZE_MB_DEFAULT = 1000;
 

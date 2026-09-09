@@ -20,6 +20,7 @@
 #include "SettingsWindow.h"
 
 #include <QDir>
+#include <QCheckBox>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QFrame>
@@ -204,6 +205,28 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
     tabs->addTab(cacheScroll, tr("Cache"));
     ui->verticalLayout->insertWidget(0, tabs, 1);
 
+    // Composer / key bindings
+    auto* composerPage = new QWidget(tabs);
+    auto* composerLayout = new QVBoxLayout(composerPage);
+    composerLayout->setContentsMargins(12, 12, 12, 12);
+    composerLayout->setSpacing(12);
+
+    auto* composerGroup = new QGroupBox(tr("Message editor"), composerPage);
+    auto* composerForm = new QFormLayout(composerGroup);
+    sendOnCtrlEnter = new QCheckBox(composerGroup);
+    sendOnCtrlEnter->setChecked(settings.value(
+        COMPOSER_SEND_ON_CTRL_ENTER, COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT).toBool());
+    composerForm->addRow(tr("Send on Ctrl+Enter:"), sendOnCtrlEnter);
+    composerLayout->addWidget(composerGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("When enabled, press Ctrl+Enter to send a message and plain Enter to "
+           "insert a new line. When disabled, plain Enter sends and Ctrl+Enter "
+           "inserts a new line.")));
+    composerLayout->addStretch(1);
+    tabs->addTab(composerPage, tr("Composer"));
+
     connect (ui->downloadLocationButton, &QPushButton::clicked, [this] {
         QDir defaultDir (ui->downloadLocationValue->text());
 
@@ -238,6 +261,7 @@ void SettingsWindow::applyNewSettings ()
     settings.setValue(POST_CACHE_MEMORY_TARGET_MB, memoryTargetMB->value());
     settings.setValue(POST_CACHE_MEMORY_POST_TTL_MINUTES, memoryPostTtlMinutes->value());
     settings.setValue(POST_CACHE_MEMORY_SWEEP_SECONDS, memorySweepSeconds->value());
+    settings.setValue(COMPOSER_SEND_ON_CTRL_ENTER, sendOnCtrlEnter->isChecked());
     settings.sync ();
 }
 
