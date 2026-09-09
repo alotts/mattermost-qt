@@ -55,6 +55,7 @@ public:
     void refreshCompletions() { refreshCompletion(); }
 
     void setSubmitOnEnter(bool enabled) { submitOnEnter = enabled; }
+    void setSubmitOnCtrlEnter(bool enabled) { submitOnCtrlEnter = enabled; }
     void setSubmitHandler(std::function<void()> handler)
     {
         submitHandler = std::move(handler);
@@ -91,6 +92,7 @@ private:
     int activeQueryStart = -1;
     int activeQueryEnd = -1;
     bool submitOnEnter = false;
+    bool submitOnCtrlEnter = false;
     std::function<void()> submitHandler;
 };
 

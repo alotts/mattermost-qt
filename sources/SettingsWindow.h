@@ -21,6 +21,7 @@
 
 #include <QDialog>
 
+class QCheckBox;
 class QSpinBox;
 
 namespace Ui {
@@ -53,6 +54,7 @@ private:
     QSpinBox* memoryTargetMB = nullptr;
     QSpinBox* memoryPostTtlMinutes = nullptr;
     QSpinBox* memorySweepSeconds = nullptr;
+    QCheckBox* sendOnCtrlEnter = nullptr;
 };
 
 } /* namespace Mattermost */

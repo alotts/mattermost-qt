@@ -282,9 +282,13 @@ void InteractiveTextEdit::keyPressEvent(QKeyEvent* event)
         }
     }
 
-    if (submitOnEnter
-        && (event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return)
-        && !(event->modifiers() & Qt::ShiftModifier)) {
+    const bool plainEnter = (event->key() == Qt::Key_Enter || event->key() == Qt::Key_Return)
+        && !(event->modifiers() & Qt::ShiftModifier);
+    const bool ctrlEnter = plainEnter
+        && (event->modifiers() & Qt::ControlModifier);
+    const bool shouldSubmit = submitOnEnter
+        && (submitOnCtrlEnter ? ctrlEnter : plainEnter);
+    if (shouldSubmit) {
         if (submitHandler) {
             submitHandler();
         }

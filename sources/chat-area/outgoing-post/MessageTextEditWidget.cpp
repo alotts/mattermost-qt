@@ -33,8 +33,11 @@
 #include <QKeyEvent>
 #include <QPalette>
 #include <QResizeEvent>
+#include <QSettings>
 #include <QTextDocument>
 #include <QTimer>
+
+#include "Settings.h"
 
 namespace Mattermost {
 namespace {
@@ -47,6 +50,10 @@ MessageTextEditWidget::MessageTextEditWidget(QWidget* parent)
     : InteractiveTextEdit(parent)
 {
     setSubmitOnEnter(true);
+    const QSettings settings;
+    setSubmitOnCtrlEnter(
+        settings.value(COMPOSER_SEND_ON_CTRL_ENTER,
+                       COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT).toBool());
     setSubmitHandler([this] { emit enterPressed(); });
 
     // Keep the composer visually continuous with the action row below it.
