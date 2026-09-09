@@ -238,6 +238,22 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
         tr("Keep the Following tab visible even while \"Show unread only\" is "
            "active. When disabled it is hidden, leaving only Channels and "
            "Attention.")));
+
+    auto* appearanceGroup = new QGroupBox(tr("Appearance"), composerPage);
+    auto* appearanceForm = new QFormLayout(appearanceGroup);
+    uiFontScale = new QSpinBox(appearanceGroup);
+    uiFontScale->setRange(UI_FONT_SCALE_PERCENT_MIN, UI_FONT_SCALE_PERCENT_MAX);
+    uiFontScale->setSuffix(QStringLiteral(" %"));
+    uiFontScale->setSingleStep(5);
+    uiFontScale->setValue(settings.value(
+        UI_FONT_SCALE_PERCENT, UI_FONT_SCALE_PERCENT_DEFAULT).toInt());
+    appearanceForm->addRow(tr("UI font scale:"), uiFontScale);
+    composerLayout->addWidget(appearanceGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("Scales the whole interface font as a percentage. Applies after "
+           "the application is restarted; 100% uses the system default.")));
     composerLayout->addStretch(1);
     tabs->addTab(composerPage, tr("General"));
 
@@ -277,6 +293,7 @@ void SettingsWindow::applyNewSettings ()
     settings.setValue(POST_CACHE_MEMORY_SWEEP_SECONDS, memorySweepSeconds->value());
     settings.setValue(COMPOSER_SEND_ON_CTRL_ENTER, sendOnCtrlEnter->isChecked());
     settings.setValue(ALWAYS_SHOW_FOLLOWING_TAB, alwaysShowFollowingTab->isChecked());
+    settings.setValue(UI_FONT_SCALE_PERCENT, uiFontScale->value());
     settings.sync ();
 }
 

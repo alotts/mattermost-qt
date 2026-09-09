@@ -43,6 +43,13 @@ static constexpr bool COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT = false;
 static constexpr const char* ALWAYS_SHOW_FOLLOWING_TAB = "sidebar/alwaysShowFollowingTab";
 static constexpr bool ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT = true;
 
+// Global UI font scale, expressed as a percentage of the application font.
+// Applied once at startup; 100 means no scaling.
+static constexpr const char* UI_FONT_SCALE_PERCENT = "ui/fontScalePercent";
+static constexpr int UI_FONT_SCALE_PERCENT_DEFAULT = 100;
+static constexpr int UI_FONT_SCALE_PERCENT_MIN = 80;
+static constexpr int UI_FONT_SCALE_PERCENT_MAX = 200;
+
 static constexpr const char* CACHE_SIZE_MB = "config/cacheSizeMB";
 static constexpr int CACHE_SIZE_MB_DEFAULT = 1000;
 
