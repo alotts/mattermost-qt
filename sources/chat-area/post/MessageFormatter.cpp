@@ -9,8 +9,9 @@
 
 #include "backend/emoji/EmojiInfo.h"
 
-#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 #include <QRegularExpression>
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
 #include <QTextFragment>
 #endif
 
@@ -54,6 +55,656 @@ static void replaceEmojis(QString& text)
         emojiEnd = emojiStart + emoji.unicodeString.size();
     } while (emojiStart != -1);
 }
+
+namespace {
+
+QString htmlEscape(const QString& text)
+{
+    return text.toHtmlEscaped();
+}
+
+int delimiterRunLength(const QString& text, int position, QChar character)
+{
+    int length = 0;
+    while (position + length < text.size() && text.at(position + length) == character) {
+        ++length;
+    }
+    return length;
+}
+
+bool isMarkdownPunctuation(const QChar& c)
+{
+    return c == QLatin1Char('*') || c == QLatin1Char('_') || c == QLatin1Char('`')
+        || c == QLatin1Char('[') || c == QLatin1Char(']') || c == QLatin1Char('(')
+        || c == QLatin1Char(')') || c == QLatin1Char('!') || c == QLatin1Char('\\')
+        || c == QLatin1Char('~') || c == QLatin1Char('#') || c == QLatin1Char('>');
+}
+
+// True if the position `start` lies within a `[label](url)` (or `![label](url)`)
+// markdown link - either inside the label or inside the target URL. Both parts
+// are rendered literally by renderInline(), so URL protection must not escape
+// their formatting characters.
+static bool isInsideMarkdownLink(const QString& text, int start)
+{
+    int lastOpen = -1;
+    QChar lastOpenChar;
+    for (int k = start - 1; k >= 0; --k) {
+        const QChar c = text.at(k);
+        if (c == QLatin1Char('\n') || c == QLatin1Char('\r')) {
+            return false;
+        }
+        if (c == QLatin1Char('(') || c == QLatin1Char('[')) {
+            lastOpen = k;
+            lastOpenChar = c;
+            break;
+        }
+    }
+    if (lastOpen == -1) {
+        return false;
+    }
+
+    if (lastOpenChar == QLatin1Char('(')) {
+        // Target: '(' immediately closes a ']' that ends a link label.
+        if (lastOpen == 0 || text.at(lastOpen - 1) != QLatin1Char(']')) {
+            return false;
+        }
+        for (int k = lastOpen - 2; k >= 0; --k) {
+            const QChar c = text.at(k);
+            if (c == QLatin1Char('[')) {
+                return true;
+            }
+            if (c == QLatin1Char(']') || c == QLatin1Char(')') || c == QLatin1Char('(')
+                || c == QLatin1Char('\n') || c == QLatin1Char('\r')) {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    // Label: the label's closing ']' must be followed by '(' to form a link.
+    const int close = text.indexOf(QLatin1Char(']'), start);
+    return close != -1 && close + 1 < text.size()
+        && text.at(close + 1) == QLatin1Char('(');
+}
+
+// Escape formatting characters (*, _, ~) inside bare URLs so they won't be
+// parsed as markdown emphasis/strikethrough by renderInline(). Uses the same
+// URL pattern as linkifyBareUrlsInHtml below. Idempotent: a formatting
+// character that is already preceded by an escaping backslash is left alone, so
+// applying protection again to a sub-string (e.g. a link label) cannot double
+// escape it. URLs inside markdown links (label or target) are skipped because
+// their formatting characters are rendered literally by renderInline().
+static QString protectFormattingInBareUrls(const QString& text)
+{
+    static const QRegularExpression bareUrl(
+        QStringLiteral(R"(https?://[^\s<>"'`)\]]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    QString result = text;
+    int offset = 0;
+    for (QRegularExpressionMatchIterator it = bareUrl.globalMatch(text); it.hasNext();) {
+        QRegularExpressionMatch match = it.next();
+        const int matchStart = match.capturedStart();
+        if (isInsideMarkdownLink(text, matchStart)) {
+            continue;
+        }
+        int len = match.capturedLength();
+        bool escaped = false;
+        for (int k = 0; k < len; ++k) {
+            const QChar& c = text.at(matchStart + k);
+            if (c == QLatin1Char('\\')) {
+                escaped = true;
+                continue;
+            }
+            if ((c == QLatin1Char('*') || c == QLatin1Char('_') || c == QLatin1Char('~'))
+                && !escaped) {
+                result.insert(matchStart + k + offset, '\\');
+                ++offset;
+            }
+            escaped = false;
+        }
+    }
+    return result;
+}
+
+// Convert a run of inline Markdown to escaped HTML. Handles inline code,
+// backslash escapes, images, links, strong/emphasis and strikethrough. Text is
+// literally copied and the three HTML-sensitive characters escaped as it goes.
+QString renderInline(const QString& rawText)
+{
+    // Any link in the message - bare http(s) URL or a markdown link target -
+    // must keep its formatting characters (*, _, ~) literal. Escape them before
+    // parsing so they are not interpreted as emphasis/strikethrough. Applied on
+    // every entry so headings, list items and nested constructs are covered too.
+    const QString text = protectFormattingInBareUrls(rawText);
+
+    QString out;
+    out.reserve(text.size() + 32);
+
+    const int size = text.size();
+    int i = 0;
+    while (i < size) {
+        const QChar c = text.at(i);
+
+        if (c == QLatin1Char('\\') && i + 1 < size
+            && isMarkdownPunctuation(text.at(i + 1))) {
+            out += htmlEscape(text.mid(i + 1, 1));
+            i += 2;
+            continue;
+        }
+
+        // Preserve emoji tokens verbatim so markdown emphasis on '_' (or any
+        // other inline construct) cannot corrupt ':name:' before replaceEmojis
+        // runs over the rendered HTML.
+        if (c == QLatin1Char(':')) {
+            const int close = text.indexOf(QLatin1Char(':'), i + 1);
+            if (close != -1) {
+                const QString name = text.mid(i + 1, close - i - 1);
+                if (!name.isEmpty() && !name.contains(QLatin1Char(' '))
+                    && EmojiInfo::findByName(name)) {
+                    out += htmlEscape(text.mid(i, close - i + 1));
+                    i = close + 1;
+                    continue;
+                }
+            }
+        }
+
+        if (c == QLatin1Char('`')) {
+            const int run = delimiterRunLength(text, i, QLatin1Char('`'));
+            bool found = false;
+            int close = i + run;
+            while (close + run <= size) {
+                const int candidateRun = delimiterRunLength(text, close, QLatin1Char('`'));
+                if (run > 2 || close < size - run + 1) {
+                    if (candidateRun == run) {
+                        found = true;
+                        break;
+                    }
+                    if (candidateRun > 0) {
+                        close += candidateRun;
+                    } else {
+                        ++close;
+                    }
+                } else {
+                    break;
+                }
+            }
+            if (run <= 2 && found) {
+                QString code = text.mid(i + run, close - i - run);
+                if (code.size() >= 2 && code.front().isSpace() && code.back().isSpace()
+                    && !code.startsWith(QLatin1String("  "))
+                    && !code.endsWith(QLatin1String("  "))) {
+                    code = code.mid(1, code.size() - 2);
+                }
+                out += QStringLiteral("<code>");
+                out += htmlEscape(code);
+                out += QStringLiteral("</code>");
+                i = close + run;
+                continue;
+            }
+            out += QString(run, QLatin1Char('`'));
+            i += run;
+            continue;
+        }
+
+        const bool isImage = c == QLatin1Char('!') && i + 1 < size
+            && text.at(i + 1) == QLatin1Char('[');
+        if (c == QLatin1Char('[') || isImage) {
+            const int labelStart = i + (isImage ? 2 : 1);
+            const int closeBracket = text.indexOf(QLatin1Char(']'), labelStart);
+            if (closeBracket != -1 && closeBracket + 1 < size
+                && text.at(closeBracket + 1) == QLatin1Char('(')) {
+                int depth = 1;
+                int urlEnd = -1;
+                for (int k = closeBracket + 2; k < size; ++k) {
+                    const QChar pc = text.at(k);
+                    if (pc == QLatin1Char('(')) {
+                        ++depth;
+                    } else if (pc == QLatin1Char(')')) {
+                        --depth;
+                        if (depth == 0) {
+                            urlEnd = k;
+                            break;
+                        }
+                    }
+                }
+                if (urlEnd != -1) {
+                    QString target = text.mid(closeBracket + 2, urlEnd - closeBracket - 2).trimmed();
+                    QString url = target;
+                    if (const int space = target.indexOf(QLatin1Char(' ')); space != -1) {
+                        url = target.left(space);
+                    }
+                    url = url.trimmed();
+                    if (!url.isEmpty()) {
+                        if (isImage) {
+                            out += QStringLiteral("<img src=\"") + htmlEscape(url)
+                                + QStringLiteral("\" alt=\"")
+                                + htmlEscape(text.mid(labelStart, closeBracket - labelStart))
+                                + QStringLiteral("\">");
+                        } else {
+                            out += QStringLiteral("<a href=\"") + htmlEscape(url)
+                                + QStringLiteral("\">")
+                                + htmlEscape(text.mid(labelStart, closeBracket - labelStart))
+                                + QStringLiteral("</a>");
+                        }
+                        i = urlEnd + 1;
+                        continue;
+                    }
+                }
+            }
+            if (isImage) {
+                out += QLatin1Char('!');
+                ++i;
+                continue;
+            }
+            out += QLatin1Char('[');
+            ++i;
+            continue;
+        }
+
+        if (c == QLatin1Char('*') || c == QLatin1Char('_')) {
+            const int run = delimiterRunLength(text, i, c);
+            const bool strong = run >= 2;
+            const int fullRun = strong ? 2 : 1;
+            int close = -1;
+            for (int k = i + fullRun; k + 1 <= size; ++k) {
+                const int candidateRun = delimiterRunLength(text, k, c);
+                if (candidateRun > 0 && (strong ? candidateRun >= 2 : candidateRun >= 1)) {
+                    close = k;
+                    break;
+                }
+            }
+            if (close != -1 && close > i + fullRun) {
+                const QString tag = strong ? QStringLiteral("strong") : QStringLiteral("em");
+                out += QLatin1Char('<') + tag + QLatin1Char('>');
+                out += renderInline(text.mid(i + fullRun, close - i - fullRun));
+                out += QStringLiteral("</") + tag + QLatin1Char('>');
+                i = close + fullRun;
+                continue;
+            }
+            out += QString(run, c);
+            i += run;
+            continue;
+        }
+
+        if (c == QLatin1Char('~')) {
+            const int run = delimiterRunLength(text, i, QLatin1Char('~'));
+            if (run >= 2) {
+                int close = text.indexOf(QStringLiteral("~~"), i + 2);
+                if (close != -1) {
+                    out += QStringLiteral("<del>");
+                    out += renderInline(text.mid(i + 2, close - i - 2));
+                    out += QStringLiteral("</del>");
+                    i = close + 2;
+                    continue;
+                }
+            }
+            out += QString(run, QLatin1Char('~'));
+            i += run;
+            continue;
+        }
+
+        out += htmlEscape(text.mid(i, 1));
+        ++i;
+    }
+
+    return out;
+}
+
+struct BlockLine {
+    enum Type { Paragraph, Heading, Fence, Quote, Unordered, Ordered, Rule, Blank };
+    Type type = Paragraph;
+    int fenceMarkers = 0;      // marker count/fence length
+    QChar fenceCharacter;
+};
+
+// Classify a single line, recording its structural type and any secondary
+// payload (heading level or fence marker length/character) on the result.
+BlockLine classifyBlockLine(const QString& line)
+{
+    BlockLine result;
+
+    int position = 0;
+    while (position < line.size() && position < 4 && line.at(position) == QLatin1Char(' ')) {
+        ++position;
+    }
+    if (position >= line.size()) {
+        result.type = BlockLine::Blank;
+        return result;
+    }
+
+    const QChar first = line.at(position);
+
+    // Fenced code block: ``` or ~~~ with an optional info string.
+    if (first == QLatin1Char('`') || first == QLatin1Char('~')) {
+        int run = 0;
+        while (position + run < line.size() && line.at(position + run) == first) {
+            ++run;
+        }
+        if (run >= 3) {
+            result.type = BlockLine::Fence;
+            result.fenceCharacter = first;
+            result.fenceMarkers = run;
+            return result;
+        }
+    }
+
+    if (first == QLatin1Char('>')) {
+        result.type = BlockLine::Quote;
+        return result;
+    }
+
+    // Horizontal rule: ***, ---, ___.
+    if ((first == QLatin1Char('*') || first == QLatin1Char('-') || first == QLatin1Char('_'))) {
+        int count = 0;
+        bool onlyRule = true;
+        for (int k = position; k < line.size(); ++k) {
+            const QChar ch = line.at(k);
+            if (ch == QLatin1Char(' ')) {
+                continue;
+            }
+            if (ch == first) {
+                ++count;
+            } else {
+                onlyRule = false;
+                break;
+            }
+        }
+        if (onlyRule && count >= 3) {
+            result.type = BlockLine::Rule;
+            return result;
+        }
+    }
+
+    int hashes = 0;
+    while (position + hashes < line.size() && line.at(position + hashes) == QLatin1Char('#')) {
+        ++hashes;
+    }
+    if (hashes >= 1 && hashes <= 6
+        && (position + hashes >= line.size() || line.at(position + hashes) == QLatin1Char(' '))) {
+        result.type = BlockLine::Heading;
+        result.fenceMarkers = hashes; // reuse as heading level
+        return result;
+    }
+
+    if (first == QLatin1Char('-') || first == QLatin1Char('+') || first == QLatin1Char('*')) {
+        if (position + 1 < line.size()
+            && (line.at(position + 1) == QLatin1Char(' ') || line.at(position + 1) == QLatin1Char('\t'))) {
+            result.type = BlockLine::Unordered;
+            return result;
+        }
+    }
+
+    int digits = 0;
+    while (position + digits < line.size() && line.at(position + digits).isDigit()) {
+        ++digits;
+    }
+    if (digits > 0 && position + digits + 1 < line.size()
+        && line.at(position + digits) == QLatin1Char('.')
+        && line.at(position + digits + 1) == QLatin1Char(' ')) {
+        result.type = BlockLine::Ordered;
+        return result;
+    }
+
+    result.type = BlockLine::Paragraph;
+    return result;
+}
+
+bool isClosingFence(const QString& line, QChar character, int openingLength)
+{
+    int position = 0;
+    while (position < line.size() && position < 4 && line.at(position) == QLatin1Char(' ')) {
+        ++position;
+    }
+    int run = 0;
+    while (position + run < line.size() && line.at(position + run) == character) {
+        ++run;
+    }
+    if (run < openingLength) {
+        return false;
+    }
+    for (int k = position + run; k < line.size(); ++k) {
+        if (!line.at(k).isSpace()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString stripQuotePrefix(const QString& text)
+{
+    QStringList lines = text.split(QLatin1Char('\n'));
+    for (QString& line : lines) {
+        int position = 0;
+        while (position < line.size() && position < 4 && line.at(position) == QLatin1Char(' ')) {
+            ++position;
+        }
+        if (position < line.size() && line.at(position) == QLatin1Char('>')) {
+            ++position;
+            if (position < line.size() && line.at(position) == QLatin1Char(' ')) {
+                ++position;
+            }
+        }
+        line = line.mid(position);
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+QString renderParagraphHtml(const QString& paragraph)
+{
+    // Inline markdown is parsed on the raw, unescaped source so links, code
+    // and emphasis are recognised before the final HTML escaping inside
+    // renderInline(). Blank lines inside a paragraph become <br>.
+    QString body = renderInline(paragraph);
+    body.replace(QStringLiteral("\n"), QStringLiteral("<br>"));
+    return QStringLiteral("<p>") + body + QStringLiteral("</p>");
+}
+
+QString renderMarkdownHtml(const QString& text)
+{
+    QString html;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    const int count = lines.size();
+    int i = 0;
+
+    while (i < count) {
+        const BlockLine block = classifyBlockLine(lines.at(i));
+        const BlockLine::Type type = block.type;
+
+        if (type == BlockLine::Blank) {
+            ++i;
+            continue;
+        }
+
+        if (type == BlockLine::Rule) {
+            html += QStringLiteral("<hr>");
+            ++i;
+            continue;
+        }
+
+        if (type == BlockLine::Heading) {
+            const int level = block.fenceMarkers;
+            const int hashStart = lines.at(i).indexOf(QLatin1Char('#'));
+            const QString body = lines.at(i).mid(hashStart + level).trimmed();
+            html += QStringLiteral("<h%1>").arg(level) + renderInline(body)
+                + QStringLiteral("</h%1>").arg(level);
+            ++i;
+            continue;
+        }
+
+        if (type == BlockLine::Fence) {
+            ++i;
+            QString code;
+            while (i < count) {
+                if (isClosingFence(lines.at(i), block.fenceCharacter, block.fenceMarkers)) {
+                    ++i;
+                    break;
+                }
+                if (!code.isEmpty()) {
+                    code += QLatin1Char('\n');
+                }
+                code += lines.at(i);
+                ++i;
+            }
+            html += QStringLiteral("<pre style=\"white-space:pre-wrap;\">") + htmlEscape(code) + QStringLiteral("</pre>");
+            continue;
+        }
+
+        if (type == BlockLine::Quote) {
+            QString quoteText;
+            while (i < count) {
+                if (classifyBlockLine(lines.at(i)).type != BlockLine::Quote) {
+                    break;
+                }
+                if (!quoteText.isEmpty()) {
+                    quoteText += QLatin1Char('\n');
+                }
+                quoteText += stripQuotePrefix(lines.at(i));
+                ++i;
+            }
+            html += QStringLiteral("<blockquote>") + renderMarkdownHtml(quoteText)
+                + QStringLiteral("</blockquote>");
+            continue;
+        }
+
+        if (type == BlockLine::Unordered || type == BlockLine::Ordered) {
+            const bool ordered = type == BlockLine::Ordered;
+            const QString listTag = ordered ? QStringLiteral("ol") : QStringLiteral("ul");
+            html += QLatin1Char('<') + listTag + QLatin1Char('>');
+            while (i < count) {
+                const BlockLine item = classifyBlockLine(lines.at(i));
+                if (item.type != type) {
+                    break;
+                }
+                QString itemLine = lines.at(i);
+                int markerStart = 0;
+                while (markerStart < itemLine.size()
+                       && (itemLine.at(markerStart) == QLatin1Char(' ')
+                           || itemLine.at(markerStart) == QLatin1Char('\t'))) {
+                    ++markerStart;
+                }
+                if (ordered) {
+                    int markerEnd = markerStart;
+                    while (markerEnd < itemLine.size() && itemLine.at(markerEnd).isDigit()) {
+                        ++markerEnd;
+                    }
+                    markerEnd += 1; // '.'
+                    if (markerEnd < itemLine.size()) {
+                        ++markerEnd; // ' '
+                    }
+                    itemLine = itemLine.mid(markerEnd);
+                } else {
+                    itemLine = itemLine.mid(markerStart + 1); // marker
+                    if (!itemLine.isEmpty() && itemLine.at(0).isSpace()) {
+                        itemLine = itemLine.mid(1);
+                    }
+                }
+                html += QStringLiteral("<li>") + renderInline(itemLine) + QStringLiteral("</li>");
+                ++i;
+            }
+            html += QStringLiteral("</") + listTag + QLatin1Char('>');
+            continue;
+        }
+
+        QString paragraph;
+        while (i < count) {
+            const BlockLine t = classifyBlockLine(lines.at(i));
+            if (t.type == BlockLine::Blank || t.type == BlockLine::Heading
+                || t.type == BlockLine::Fence || t.type == BlockLine::Quote
+                || t.type == BlockLine::Rule || t.type == BlockLine::Unordered
+                || t.type == BlockLine::Ordered) {
+                break;
+            }
+            if (!paragraph.isEmpty()) {
+                paragraph += QLatin1Char('\n');
+            }
+            paragraph += lines.at(i);
+            ++i;
+        }
+        html += renderParagraphHtml(paragraph);
+    }
+
+    return html;
+}
+
+// Linkify bare http(s) URLs that the Markdown pass left as plain text. Walk the
+// generated HTML and only rewrite text outside <a> / <code> / <pre> content and
+// outside attribute values.
+QString linkifyBareUrlsInHtml(const QString& html)
+{
+    static const QRegularExpression urlExpression(
+        QStringLiteral(R"(https?://[^\s<>"'`]+)"),
+        QRegularExpression::CaseInsensitiveOption);
+
+    QString out;
+    out.reserve(html.size() + 64);
+
+    const int size = html.size();
+    int i = 0;
+    int linkifyDepth = 0;   // >0 while inside a link/anchor
+    int literalDepth = 0;   // >0 while inside <code> or <pre> (no linkification)
+
+    while (i < size) {
+        if (html.at(i) == QLatin1Char('<')) {
+            const int tagEnd = html.indexOf(QLatin1Char('>'), i);
+            if (tagEnd == -1) {
+                out += html.mid(i);
+                break;
+            }
+            const QString tag = html.mid(i, tagEnd - i + 1);
+            const QString lower = tag.toLower();
+            out += tag;
+            if (lower.startsWith(QStringLiteral("<pre")) || lower.startsWith(QStringLiteral("<code"))) {
+                ++literalDepth;
+            } else if (lower.startsWith(QStringLiteral("</pre")) || lower.startsWith(QStringLiteral("</code"))) {
+                literalDepth = qMax(0, literalDepth - 1);
+            } else if (lower.startsWith(QStringLiteral("<a ")) || lower.startsWith(QStringLiteral("<a>"))) {
+                ++linkifyDepth;
+            } else if (lower.startsWith(QStringLiteral("</a"))) {
+                linkifyDepth = qMax(0, linkifyDepth - 1);
+            }
+            i = tagEnd + 1;
+            continue;
+        }
+
+        if (linkifyDepth == 0 && literalDepth == 0) {
+            const QRegularExpressionMatch match = urlExpression.match(html, i);
+            if (match.hasMatch() && match.capturedStart(0) == i) {
+                QString url = match.captured(0);
+                const int punctuation = [&url] {
+                    int count = 0;
+                    while (!url.isEmpty()
+                           && (url.back() == QLatin1Char(',') || url.back() == QLatin1Char(';')
+                               || url.back() == QLatin1Char('!') || url.back() == QLatin1Char('?'))) {
+                        url.chop(1);
+                        ++count;
+                    }
+                    return count;
+                }();
+                if (!url.isEmpty()) {
+                    out += QStringLiteral("<a href=\"") + url
+                        + QStringLiteral("\">") + url + QStringLiteral("</a>");
+                } else {
+                    out += html.mid(i, match.capturedLength(0));
+                }
+                i += match.capturedLength(0);
+                if (punctuation > 0) {
+                    // Re-emit the punctuation that was trimmed from the address.
+                    out += html.mid(i, i >= size ? 0 : qMin(punctuation, size - i));
+                    i = qMin(i + punctuation, size);
+                }
+                continue;
+            }
+        }
+
+        out += html.at(i);
+        ++i;
+    }
+
+    return out;
+}
+
+} // namespace
+
 #endif
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 10, 0)
@@ -546,47 +1197,18 @@ QString formatMessageText(const QString& text)
     buildMarkdownDocument(document, text);
     return document.toHtml();
 #else
-    QString result(text.toHtmlEscaped());
-    result.replace("\n", "<br>");
+    // Qt < 6.10 has no Markdown parser, so render a pragmatic subset of
+    // CommonMark to HTML ourselves so messages do not show raw markup.
+    QString result = renderMarkdownHtml(text);
 
-    int linkStart = 0;
-    int linkEnd = 0;
-
+    // Emoji replacement runs over the rendered HTML text. Emoji tokens are
+    // never produced by the renderer, so this cannot corrupt generated tags.
     replaceEmojis(result);
 
-    do {
-        QLatin1String lookups[2] = { QLatin1String("http://"), QLatin1String("https://") };
-        QLatin1String* useLookup = nullptr;
-
-        for (auto& lookup: lookups) {
-            linkStart = result.indexOf(lookup, linkEnd);
-            if (linkStart != -1) {
-                useLookup = &lookup;
-                break;
-            }
-        }
-
-        if (!useLookup) {
-            break;
-        }
-
-        for (linkEnd = linkStart + useLookup->size(); linkEnd < result.size(); ++linkEnd) {
-            if (result.at(linkEnd) == ' ' || result.at(linkEnd) == '<') {
-                break;
-            }
-        }
-
-        const int size = linkEnd - linkStart;
-#if QT_VERSION < QT_VERSION_CHECK(6, 0, 0)
-        result.insert(linkEnd, "\">" + QStringRef(&result, linkStart, size) + "</a>");
-#else
-        const QStringView stringView(result);
-        result.insert(linkEnd, "\">" + stringView.sliced(linkStart, size).toString() + "</a>");
-#endif
-        result.insert(linkStart, "<a href=\"");
-
-        linkEnd += size + 15;
-    } while (linkStart != -1);
+    // Linkify bare http(s) addresses that the renderer left as plain text.
+    // Only operate on the text nodes by skipping anything inside an existing
+    // <a ...>...</a> or <code>/<pre> generated by the inline/block pass.
+    result = linkifyBareUrlsInHtml(result);
 
     return result;
 #endif
