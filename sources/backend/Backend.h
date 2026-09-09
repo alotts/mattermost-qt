@@ -55,6 +55,14 @@ public:
 
 	void reset ();
 
+	/**
+	 * Fast, deterministic teardown used when the application process is about
+	 * to exit (e.g. the tray Quit action). Stops reconnecting timers and closes
+	 * active WebSocket/HTTP connections so nothing keeps the process alive after
+	 * the event loop terminates.
+	 */
+	void shutdown ();
+
 	//login to server (/users/login)
 	void login (const BackendLoginData& loginData, std::function<void(const QString&)> callback);
 

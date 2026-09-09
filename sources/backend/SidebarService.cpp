@@ -11,6 +11,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QTimer>
 
 #include "backend/Backend.h"
@@ -114,12 +115,16 @@ const SidebarCategory* SidebarTeamState::categoryByType(const QString& type) con
 
 SidebarService& SidebarService::instance(Backend& backend)
 {
-    static QMap<Backend*, SidebarService*> instances;
-    auto it = instances.find(&backend);
-    if (it == instances.end()) {
-        it = instances.insert(&backend, new SidebarService(backend));
+    // SidebarService is a QObject child of Backend and is destroyed together
+    // with it (e.g. during application shutdown). Use a self-nulling QPointer so
+    // a stale entry never returns a dangling reference for a destroyed Backend;
+    // the next call transparently constructs a fresh instance.
+    static QHash<Backend*, QPointer<SidebarService>> instances;
+    QPointer<SidebarService>& service = instances[&backend];
+    if (!service) {
+        service = new SidebarService(backend);
     }
-    return **it;
+    return *service;
 }
 
 SidebarService::SidebarService(Backend& backend)

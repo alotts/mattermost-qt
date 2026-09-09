@@ -47,6 +47,15 @@ public:
     ChatArea* findThread(const QString& channelId, const QString& rootId) const;
     void presentThread(ChatArea* area);
 
+    /**
+     * Close every detached thread window. Detached thread areas live as
+     * top-level windows (they are reparented away from the MainWindow) and set
+     * WA_DeleteOnClose, so they are not destroyed together with the MainWindow.
+     * Closing them here guarantees the process stands down on quit even when a
+     * thread window is currently detached.
+     */
+    void closeAllThreadWindows();
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
 
