@@ -38,6 +38,11 @@ static constexpr const char* DOWNLOAD_IMAGE_MAX_HEIGHT = "config/imageMaxHeight"
 static constexpr const char* COMPOSER_SEND_ON_CTRL_ENTER = "config/sendOnCtrlEnter";
 static constexpr bool COMPOSER_SEND_ON_CTRL_ENTER_DEFAULT = false;
 
+// Sidebar navigation. When enabled, the Following tab stays visible even while
+// "Show unread only" is active. When disabled, it is hidden just like today.
+static constexpr const char* ALWAYS_SHOW_FOLLOWING_TAB = "sidebar/alwaysShowFollowingTab";
+static constexpr bool ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT = true;
+
 static constexpr const char* CACHE_SIZE_MB = "config/cacheSizeMB";
 static constexpr int CACHE_SIZE_MB_DEFAULT = 1000;
 
