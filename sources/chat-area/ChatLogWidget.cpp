@@ -61,6 +61,39 @@ void acknowledgeChannelRead(Backend& backend, BackendChannel& channel)
     backend.markChannelAsViewed(channel);
 }
 
+// Mattermost emits join/leave events as system posts (e.g.
+// system_join_channel, system_leave_channel, system_add_remove). These
+// carry no conversational content and should not clutter the timeline, so
+// they are collapsed to an invisible row instead of a full message.
+// Invisible zero-height row used to occupy a logical slot whose post is hidden
+// (join/leave system events) without contributing any visible geometry.
+class HiddenPostRow final : public QWidget
+{
+public:
+    using QWidget::QWidget;
+
+    QSize sizeHint() const override { return QSize(0, 0); }
+    QSize minimumSizeHint() const override { return QSize(0, 0); }
+};
+
+bool isHiddenSystemPost(const BackendPost& post)
+{
+    if (post.isDeleted) {
+        return false;
+    }
+    static const QStringList joinLeavePrefixes = {
+        QStringLiteral("system_join"),
+        QStringLiteral("system_leave"),
+        QStringLiteral("system_add_remove"),
+    };
+    for (const QString& prefix : joinLeavePrefixes) {
+        if (post.type.startsWith(prefix)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 ChatLogWidget::ChatLogWidget(QWidget* parent)
@@ -613,6 +646,13 @@ QWidget* ChatLogWidget::createItemWidget(int index)
     BackendPost* post = postSource->postAt(index);
     if (!post) {
         return nullptr;
+    }
+
+    if (isHiddenSystemPost(*post)) {
+        // Keep the logical index occupied but render a zero-height transparent
+        // row so the join/leave event is not visible and does not disturb the
+        // virtualized layout geometry.
+        return new HiddenPostRow(viewport());
     }
 
     BackendPost* lastRootPost = nullptr;
