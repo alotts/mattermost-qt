@@ -55,6 +55,7 @@ private:
     QSpinBox* memoryPostTtlMinutes = nullptr;
     QSpinBox* memorySweepSeconds = nullptr;
     QCheckBox* sendOnCtrlEnter = nullptr;
+    QCheckBox* alwaysShowFollowingTab = nullptr;
 };
 
 } /* namespace Mattermost */

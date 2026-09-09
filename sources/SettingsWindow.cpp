@@ -224,8 +224,22 @@ SettingsWindow::SettingsWindow(QWidget *parent) :
         tr("When enabled, press Ctrl+Enter to send a message and plain Enter to "
            "insert a new line. When disabled, plain Enter sends and Ctrl+Enter "
            "inserts a new line.")));
+
+    auto* sidebarGroup = new QGroupBox(tr("Sidebar"), composerPage);
+    auto* sidebarForm = new QFormLayout(sidebarGroup);
+    alwaysShowFollowingTab = new QCheckBox(sidebarGroup);
+    alwaysShowFollowingTab->setChecked(settings.value(
+        ALWAYS_SHOW_FOLLOWING_TAB, ALWAYS_SHOW_FOLLOWING_TAB_DEFAULT).toBool());
+    sidebarForm->addRow(tr("Always show Following tab:"), alwaysShowFollowingTab);
+    composerLayout->addWidget(sidebarGroup);
+
+    composerLayout->addWidget(makeDescription(
+        composerPage,
+        tr("Keep the Following tab visible even while \"Show unread only\" is "
+           "active. When disabled it is hidden, leaving only Channels and "
+           "Attention.")));
     composerLayout->addStretch(1);
-    tabs->addTab(composerPage, tr("Composer"));
+    tabs->addTab(composerPage, tr("General"));
 
     connect (ui->downloadLocationButton, &QPushButton::clicked, [this] {
         QDir defaultDir (ui->downloadLocationValue->text());
@@ -262,6 +276,7 @@ void SettingsWindow::applyNewSettings ()
     settings.setValue(POST_CACHE_MEMORY_POST_TTL_MINUTES, memoryPostTtlMinutes->value());
     settings.setValue(POST_CACHE_MEMORY_SWEEP_SECONDS, memorySweepSeconds->value());
     settings.setValue(COMPOSER_SEND_ON_CTRL_ENTER, sendOnCtrlEnter->isChecked());
+    settings.setValue(ALWAYS_SHOW_FOLLOWING_TAB, alwaysShowFollowingTab->isChecked());
     settings.sync ();
 }
 
